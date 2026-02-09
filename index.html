@@ -68,78 +68,96 @@
 
       const FINAL_URL = "https://bit.ly/3ZhPd8D";
 
-      // 0 = spreman (1.mp4)
-      // 1 = 1.mp4 odgledan i zamrznut na zadnjoj sekundi
-      // 2 = 2.mp4 odgledan i zamrznut na zadnjem kadru
+      // 0 = spreman (prvi klik -> 1.mp4)
+      // 1 = prvi video odgledan (drugi klik -> 2.mp4 od 2. sekunde)
+      // 2 = drugi video odgledan (klik -> redirect)
       let step = 0;
       let playing = false;
 
-      // Učitaj prvi video kao osnovu (bez autoplay)
+      // (opciono) postavi inicijalni preview na zadnju sekundu 1.mp4,
+      // ali NE puštaj ništa na load.
       video.src = "1.mp4";
-      video.muted = false;
+      video.muted = true;
+      video.addEventListener("loadedmetadata", () => {
+        // preview = zadnja sekunda 1.mp4
+        video.currentTime = Math.max(video.duration - 1, 0);
+        video.pause();
+      });
 
-      function freezeLastSecondOfCurrentVideo() {
-        const t = Math.max((video.duration || 0) - 1, 0);
+      function playFrom(src, startSeconds, onDone) {
+        playing = true;
+        video.onended = null;
 
-        // Ako je duration još 0/NaN, probaj čim metadata bude spremna
+        // promijeni source samo kad treba (izbjegava blink)
+        if (video.src.indexOf(src) === -1) {
+          video.src = src;
+        }
+
+        const startPlayback = () => {
+          // clamp ako je video kraći
+          const safeStart = Math.min(
+            Math.max(startSeconds, 0),
+            Math.max((video.duration || 0) - 0.05, 0)
+          );
+
+          const onSeeked = () => {
+            video.removeEventListener("seeked", onSeeked);
+            video.muted = false;
+
+            video.play().catch(() => {
+              // ako browser blokira, bar pusti bez zvuka
+              video.muted = true;
+              video.play().catch(() => {});
+            });
+          };
+
+          video.addEventListener("seeked", onSeeked);
+          video.currentTime = safeStart;
+
+          video.onended = () => {
+            playing = false;
+            onDone && onDone();
+          };
+        };
+
+        // ako duration nije spreman, čekaj metadata
         if (!isFinite(video.duration) || video.duration === 0) {
           const onMeta = () => {
             video.removeEventListener("loadedmetadata", onMeta);
-            freezeLastSecondOfCurrentVideo();
+            startPlayback();
           };
           video.addEventListener("loadedmetadata", onMeta);
-          return;
+          video.load();
+        } else {
+          startPlayback();
         }
-
-        // Seek na zadnju sekundu i pauziraj čim dođe tamo (nema praznine)
-        const onSeeked = () => {
-          video.removeEventListener("seeked", onSeeked);
-          video.pause();
-          playing = false;
-        };
-
-        video.addEventListener("seeked", onSeeked);
-        video.currentTime = t;
       }
 
       btn.addEventListener("click", () => {
         if (playing) return;
 
-        // Klik 1: pusti 1.mp4 od početka, pa zamrzni na zadnjoj sekundi
+        // 1) PRVI KLIK: pusti 1.mp4 od početka
         if (step === 0) {
-          playing = true;
-          video.muted = false;
-          video.src = "1.mp4";
-          video.currentTime = 0;
-
-          video.play();
-
-          video.onended = () => {
-            // odmah prebaci na zadnju sekundu kao preview (bez crnog ekrana)
-            freezeLastSecondOfCurrentVideo();
+          playFrom("1.mp4", 0, () => {
+            // nakon završetka 1.mp4: zamrzni na zadnjoj sekundi (preview)
+            video.muted = true;
+            video.currentTime = Math.max(video.duration - 1, 0);
+            video.pause();
             step = 1;
-          };
+          });
         }
 
-        // Klik 2: pusti 2.mp4, pa zamrzni na zadnjem kadru
+        // 2) DRUGI KLIK: pusti 2.mp4 od 2. sekunde
         else if (step === 1) {
-          playing = true;
-          video.muted = false;
-          video.src = "2.mp4";
-          video.currentTime = 0;
-
-          video.play();
-
-          video.onended = () => {
-            // freeze zadnji kadar (ostavi currentTime na kraju)
+          playFrom("2.mp4", 2, () => {
+            // nakon završetka 2.mp4: freeze zadnji kadar
             video.pause();
-            playing = false;
             step = 2;
             btn.textContent = "Continue";
-          };
+          });
         }
 
-        // Klik 3: redirect
+        // 3) TREĆI KLIK: redirect
         else if (step === 2) {
           window.location.href = FINAL_URL;
         }
